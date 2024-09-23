@@ -87,19 +87,16 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
     $attribute.ConfigString = "\\%@\Pembina|PIServerName%\%@%Attribute%|Tag Base%"
 
     # Add enumeration set, if it exists
-    if ($enumerationSet -ne ""){
+    if ($enumerationSet -ne "" -and $null -ne $DB.EnumerationSets[$enumerationSet]){
         $enumSet = $DB.EnumerationSets[$enumerationSet]
-        if ($null -eq $enumSet) {
-            Write-Host "Enumeration set '$enumerationSet' not found. Skipping enumeration set assignment."
-            $attribute.Type = $type
-            $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
-        } 
-        else {
-            $attribute.TypeQualifier = $enumSet
-        }
+        $attribute.TypeQualifier = $enumSet
     } 
     else {
         if ($uom -ne ""){
+            Write-Host "Enumeration set '$enumerationSet' not found. Skipping enumeration set assignment."
+            if($uom -eq "0C"){
+                $uom = "C"
+            }
             $attribute.Type = $type
             $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
         }
