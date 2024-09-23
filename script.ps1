@@ -1,45 +1,6 @@
-Add-Type -Path "C:\Windows\Microsoft.NET\assembly\GAC_MSIL\OSIsoft.AFSDK\v4.0_4.0.0.0__6238be57836698e6\OSIsoft.AFSDK.dll"
-
-$afServers = New-Object OSIsoft.AF.PISystems  
-$afServer = $afServers["PEMBINA_AF-DEV"]
-Write-host("AFServer Name: {0}" -f $afServers.Name)
-
-# AFDatabase
-$DB = $afServer.Databases["PI_Modernization_DEV"]
-Write-host("DataBase Name: {0}" -f $DB.Name)
-
-function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $description) {
-
-    # Add attribute
-    $template = $element.Template
-    $attribute = $template.AttributeTemplates.Add($attributeName)
-    $attribute.DisplayDigits = 1
-    $attribute.Type = $type
-    $attribute.DataReferencePlugIn = $afServer.DataReferencePlugIns["PI Point"]
-    $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
-    $category = $DB.AttributeCategories[$categoryName]
-    $attribute.Categories.Add($category)
-    $attribute.ConfigString = "\\%@\Pembina|PIServerName%\%@%Attribute%|Tag Base%"
-    $attribute.Description = $description
-
-    # Add Tag Base child attribute
-    $tagBaseAttr = $attribute.AttributeTemplates.Add("Tag Base")
-    $attribute.DisplayDigits = 1
-    $tagBaseAttr.DataReferencePlugIn = $afServer.DataReferencePlugIns["String Builder"]
-    $tagBaseAttr.Type = "String"
-
-
-    # Add Label child attribute
-    $labelAttr = $attribute.AttributeTemplates.Add("Label")
-    $attribute.DisplayDigits = 1
-    $labelAttr.DataReferencePlugIn = $afServer.DataReferencePlugIns["String Builder"]
-    $labelAttr.Type = "String"
-    
-    return $attribute
-}
+$excelPath = "C:\Users\SHaw\OneDrive - Pembina Pipeline Corporation\Desktop\GC_Tag_Builder.xlsx"
 
 function Read-ExcelFile($FilePath) {
-
     $excel = $null
     $workbook = $null
 
@@ -49,30 +10,30 @@ function Read-ExcelFile($FilePath) {
         $workbook = $excel.Workbooks.Open($FilePath)
 
         Write-Host "Successfully opened the workbook."
-        Write-Host "Available sheets:"
-        foreach ($sheet in $workbook.Sheets) {
-            Write-Host "- $($sheet.Name)"
-        }
-
         $sheet = $workbook.WorkSheets.item(1)
 
-        if ($sheet -eq $null) {
-            throw "Sheet '$SheetName' not found in the workbook."
+        if ($null -eq $sheet) {
+            throw "Sheet not found in the workbook."
         }
 
         Write-Host "Successfully accessed sheet: $($sheet.Name)"
 
+        # Read configuration data from Row 2
+        $config = @{
+            'AFServerName' = $sheet.Cells.Item(2, 1).Text
+            'DatabaseName' = $sheet.Cells.Item(2, 2).Text
+            'AFSDKPath' = $sheet.Cells.Item(2, 3).Text
+        }
+
         $rowCount = ($sheet.UsedRange.Rows).Count
         $colCount = ($sheet.UsedRange.Columns).Count
 
-        Write-Host "Row count: $rowCount, Column count: $colCount"
-
         $data = @()
 
-        # Assuming the first row contains headers
+        # Read headers from row 3
         $headers = @()
         for ($col = 1; $col -le $colCount; $col++) {
-            $headerText = $sheet.Cells.Item(2, $col).Text
+            $headerText = $sheet.Cells.Item(3, $col).Text
             if ([string]::IsNullOrWhiteSpace($headerText)) {
                 $headerText = "Column$col"
             }
@@ -81,8 +42,8 @@ function Read-ExcelFile($FilePath) {
 
         Write-Host "Headers: $($headers -join ', ')"
 
-        # Read data from row 3 onwards (assuming row 2 is headers)
-        for ($row = 3; $row -le $rowCount; $row++) {
+        # Read data from row 4 onwards
+        for ($row = 4; $row -le $rowCount; $row++) {
             $rowData = [ordered]@{}
             for ($col = 1; $col -le $colCount; $col++) {
                 $cellValue = $sheet.Cells.Item($row, $col).Text
@@ -90,7 +51,10 @@ function Read-ExcelFile($FilePath) {
             }
             $data += [PSCustomObject]$rowData
         }
-        return $data
+        return @{
+            'Config' = $config
+            'Data' = $data
+        }
     }
     catch {
         Write-Error "An error occurred: $_"
@@ -106,6 +70,67 @@ function Read-ExcelFile($FilePath) {
         }
     }
 }
+
+function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $enumerationSet){
+
+    $existingAttribute = $element.Template.AttributeTemplates[$attributeName]
+    if ($null -ne $existingAttribute) {
+        Write-Host "Attribute '$attributeName' already exists. Skipping addition."
+        return $existingAttribute
+    }
+
+    # Add attribute
+    $template = $element.Template
+    $attribute = $template.AttributeTemplates.Add($attributeName)
+    $attribute.DisplayDigits = 1
+    $attribute.DataReferencePlugIn = $afServer.DataReferencePlugIns["PI Point"]
+    $attribute.ConfigString = "\\%@\Pembina|PIServerName%\%@%Attribute%|Tag Base%"
+
+    # Add enumeration set, if it exists
+    if ($enumerationSet -ne ""){
+        $enumSet = $DB.EnumerationSets[$enumerationSet]
+        if ($null -eq $enumSet) {
+            Write-Host "Enumeration set '$enumerationSet' not found. Skipping enumeration set assignment."
+            $attribute.Type = $type
+            $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
+        } 
+        else {
+            $attribute.TypeQualifier = $enumSet
+        }
+    } 
+    else {
+        if ($uom -ne ""){
+            $attribute.Type = $type
+            $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
+        }
+    }
+
+
+    if ($categoryName -ne ""){
+        $category = $DB.AttributeCategories[$categoryName]
+        if($null -ne $category){
+            $attribute.Categories.Add($category)
+        } 
+        else {
+            Write-Host "Category '$categoryName' not found. Skipping category assignment."
+        }
+    }
+
+    # Add Tag Base child attribute
+    $tagBaseAttr = $attribute.AttributeTemplates.Add("Tag Base")
+    $attribute.DisplayDigits = 1
+    $tagBaseAttr.DataReferencePlugIn = $afServer.DataReferencePlugIns["String Builder"]
+    $tagBaseAttr.Type = "String"
+
+    # Add Label child attribute
+    $labelAttr = $attribute.AttributeTemplates.Add("Label")
+    $attribute.DisplayDigits = 1
+    $labelAttr.DataReferencePlugIn = $afServer.DataReferencePlugIns["String Builder"]
+    $labelAttr.Type = "String"
+    
+    return $attribute
+}
+
 function Get-AFElement($afDatabase, $elementPath) {
     $pathParts = $elementPath -split '\\'
     $currentElement = $afDatabase.Elements
@@ -124,27 +149,27 @@ function Add-Data ($afDatabase, $rowData) {
     if(Is-Empty -rowData $rowData){
         return
     }
+
     $elementPath = $rowData.'Element Path'
     $elementName = $rowData.Name
     $element = Get-AFElement -afDatabase $afDatabase -elementPath $elementPath
 
     if ($null -ne $element) {
         Write-Host "Processing element: $elementName"
-
         if($rowData.Name -ne ""){
             $attribute = Add-Attribute -element $element `
                         -attributeName $rowData.Name `
                         -categoryName $rowData.Category `
                         -uom $rowData.UOM `
                         -type $rowData.Type `
-                        -description $rowData.Description
+                        -enumerationSet $rowData.'Enumeration Set'
 
             $attribute.Attributes["Label"].ConfigString = $rowData.Label
             $attribute.Attributes["Tag Base"].ConfigString = $rowData.'Tag Base'
         }
-
         Write-Host "Processed element: $elementName"
-    } else {
+    } 
+    else {
         Write-Host "Element not found: $elementName"
     }
 }
@@ -152,12 +177,23 @@ function Add-Data ($afDatabase, $rowData) {
 function Is-Empty($rowData) {
     return ($null -eq $rowData -or 
             [string]::IsNullOrWhiteSpace($rowData.'Element Path') -or 
-            [string]::IsNullOrWhiteSpace($rowData.Name))
+            [string]::IsNullOrWhiteSpace($rowData.Name) -or
+            [string]::IsNullOrWhiteSpace($rowData.Selected))
 }
 
-$excelPath = "C:\Users\SHaw\OneDrive - Pembina Pipeline Corporation\Desktop\GC_Tag_Builder.xlsx"
+$excelData = Read-ExcelFile -FilePath $excelPath
+$config = $excelData.Config
+$data = $excelData.Data
 
-$data = Read-ExcelFile -FilePath $excelPath
+Add-Type -Path $config.AFSDKPath
+
+$afServers = New-Object OSIsoft.AF.PISystems
+$afServer = $afServers[$config.AFServerName]
+Write-host("AFServer Name: {0}" -f $afServer.Name)
+
+# AFDatabase
+$DB = $afServer.Databases[$config.DatabaseName]
+Write-host("DataBase Name: {0}" -f $DB.Name)
 
 foreach($object in $data){
     Add-Data -afDatabase $DB -rowData $object
