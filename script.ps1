@@ -1,4 +1,10 @@
-$excelPath = "C:\Users\SHaw\OneDrive - Pembina Pipeline Corporation\Desktop\GC_Tag_Builder.xlsx"
+$excelPath = "C:\Users\SHaw\OneDrive - Pembina Pipeline Corporation\Desktop\tag_mapping_machine.xlsx"
+
+$uomMapping = @{
+    "0C" = "C"
+    "kpa" = "kPa"
+    "Kpad" = "kPad"
+}
 
 function Read-ExcelFile($FilePath) {
     $excel = $null
@@ -94,8 +100,8 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
     else {
         if ($uom -ne ""){
             Write-Host "Enumeration set '$enumerationSet' not found. Skipping enumeration set assignment."
-            if($uom -eq "0C"){
-                $uom = "C"
+            if ($uomMapping.ContainsKey($uom)) {
+                $uom = $uomMapping[$uom]
             }
             $attribute.Type = $type
             $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
@@ -124,6 +130,7 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
     $attribute.DisplayDigits = 1
     $labelAttr.DataReferencePlugIn = $afServer.DataReferencePlugIns["String Builder"]
     $labelAttr.Type = "String"
+
     
     return $attribute
 }
@@ -192,7 +199,14 @@ Write-host("AFServer Name: {0}" -f $afServer.Name)
 $DB = $afServer.Databases[$config.DatabaseName]
 Write-host("DataBase Name: {0}" -f $DB.Name)
 
+
 foreach($object in $data){
     Add-Data -afDatabase $DB -rowData $object
 }
-$DB.CheckIn()
+try {
+    $DB.CheckIn()
+    Write-Host "Successfully checked in changes to the database."
+}
+catch {
+    Write-Error "Failed to check in changes: $_"
+}
