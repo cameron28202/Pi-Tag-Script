@@ -92,7 +92,7 @@ function Read-ExcelFile($FilePath) {
     }
 }
 
-function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $enumerationSet){
+function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $enumerationSet, $tagBase){
 
     if ($null -eq $element) {
         Write-Host "Element is null"
@@ -105,12 +105,6 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
     if ($null -eq $element.Template.AttributeTemplates) {
         Write-Host "AttributeTemplates is null"
         return
-    }
-
-    $existingAttribute = $element.Template.AttributeTemplates[$attributeName]
-    if($null -ne $existingAttribute){
-        Write-Host "Attribute '$attributeName' already exists. Skipping addition, but mapping tag/label."
-        return $existingAttribute
     }
 
     # for UOMS that don't directly translate from pi data archive to AF
@@ -128,10 +122,17 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
     elseif ($uom -eq "kPa" -and $attributeName -notmatch "Press"){
         $attributeName += " Pressure"
     }
+
     if ($tagBase -like "*/OUT.CV" -and $attributeName -notmatch "Valve") {
         $attributeName += " Control Valve"
     }
 
+
+    $existingAttribute = $element.Template.AttributeTemplates[$attributeName]
+    if($null -ne $existingAttribute){
+        Write-Host "Attribute '$attributeName' already exists. Skipping addition, but mapping tag/label."
+        return $existingAttribute
+    }
 
 
     # add attribute to template
@@ -215,7 +216,8 @@ function Add-Data ($afDatabase, $rowData) {
                         -categoryName $rowData.Category `
                         -uom $rowData.UOM `
                         -type $rowData.Type `
-                        -enumerationSet $rowData.'Enumeration Set'
+                        -enumerationSet $rowData.'Enumeration Set' `
+                        -tagBase $rowData.'Tag Base'
 
             $attribute.Attributes["Label"].ConfigString = $rowData.Label
             $attribute.Attributes["Tag Base"].ConfigString = $rowData.'Tag Base'
