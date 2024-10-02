@@ -1,9 +1,24 @@
-$excelPath = "C:\Users\SHaw\OneDrive - Pembina Pipeline Corporation\Desktop\tag_mapping_machine.xlsx"
+# Title:        Tag Mapping Script
+#
+# Description: This script reads from an excel file to create attributes on the template level, then map a tag and label to each attribute.
+#
+# Params:
+#   excelPath - path to excel file holding tag information
+#
+# Example Usage:
+#   .\script.ps1 -excelPath "C:\Path\To\Your\Excel\File"
+
+param([System.String] $excelPath)
 
 $uomMapping = @{
     "0C" = "C"
     "kpa" = "kPa"
     "Kpad" = "kPad"
+    "e3m3/day" = "e3m3/d"
+    "mole %" = "mol %"
+    "m3/hr" = "m3/h"
+    "E3M3/D" = "e3m3/d"
+    "ppmw" = "ppmwt"
 }
 
 function Read-ExcelFile($FilePath) {
@@ -79,13 +94,47 @@ function Read-ExcelFile($FilePath) {
 
 function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $enumerationSet){
 
+    if ($null -eq $element) {
+        Write-Host "Element is null"
+        return
+    }
+    if ($null -eq $element.Template) {
+        Write-Host "Element Template is null"
+        return
+    }
+    if ($null -eq $element.Template.AttributeTemplates) {
+        Write-Host "AttributeTemplates is null"
+        return
+    }
+
     $existingAttribute = $element.Template.AttributeTemplates[$attributeName]
-    if ($null -ne $existingAttribute) {
-        Write-Host "Attribute '$attributeName' already exists. Skipping addition."
+    if($null -ne $existingAttribute){
+        Write-Host "Attribute '$attributeName' already exists. Skipping addition, but mapping tag/label."
         return $existingAttribute
     }
 
-    # Add attribute
+    # for UOMS that don't directly translate from pi data archive to AF
+    if ($uomMapping.ContainsKey($uom)) {
+        $uom = $uomMapping[$uom]
+    }
+
+    # add temp, flow, pressure, control valve to the attribute name to add more context, based on UOM or tag base
+    if ($uom -like "*C*" -and $attributeName -notmatch "Temp") {
+        $attributeName += " Temp"
+    }
+    elseif (($uom -eq "e3m3/d" -or $uom -eq "m3/d" -or $uom -eq "m3/h") -and $attributeName -notmatch "Flow") {
+        $attributeName += " Flow"
+    }
+    elseif ($uom -eq "kPa" -and $attributeName -notmatch "Press"){
+        $attributeName += " Pressure"
+    }
+    if ($tagBase -like "*/OUT.CV" -and $attributeName -notmatch "Valve") {
+        $attributeName += " Control Valve"
+    }
+
+
+
+    # add attribute to template
     $template = $element.Template
     $attribute = $template.AttributeTemplates.Add($attributeName)
     $attribute.DisplayDigits = 1
@@ -99,16 +148,12 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
     } 
     else {
         if ($uom -ne ""){
-            Write-Host "Enumeration set '$enumerationSet' not found. Skipping enumeration set assignment."
-            if ($uomMapping.ContainsKey($uom)) {
-                $uom = $uomMapping[$uom]
-            }
             $attribute.Type = $type
             $attribute.DefaultUOM = $afServer.UOMDatabase.UOMS[$uom]
         }
     }
 
-
+    # add category, if it exists
     if ($categoryName -ne ""){
         $category = $DB.AttributeCategories[$categoryName]
         if($null -ne $category){
@@ -136,6 +181,8 @@ function Add-Attribute ($element, $attributeName, $categoryName, $uom, $type, $e
 }
 
 function Get-AFElement($afDatabase, $elementPath) {
+    # access the element based on path passed into excel file
+
     $pathParts = $elementPath -split '\\'
     $currentElement = $afDatabase.Elements
     foreach ($part in $pathParts) {
@@ -150,6 +197,8 @@ function Get-AFElement($afDatabase, $elementPath) {
 }
 
 function Add-Data ($afDatabase, $rowData) {
+    # call the add-attribute function that actually creates each attribute, then
+    # map label/tag
     if(Is-Empty -rowData $rowData){
         return
     }
@@ -179,34 +228,39 @@ function Add-Data ($afDatabase, $rowData) {
 }
 
 function Is-Empty($rowData) {
+    # function to check if an excel cell is empty to determine if we want to use the row
     return ($null -eq $rowData -or 
             [string]::IsNullOrWhiteSpace($rowData.'Element Path') -or 
             [string]::IsNullOrWhiteSpace($rowData.Name) -or
             [string]::IsNullOrWhiteSpace($rowData.Selected))
 }
 
+# read from excel file
 $excelData = Read-ExcelFile -FilePath $excelPath
 $config = $excelData.Config
 $data = $excelData.Data
 
+# add path to the AFSDK
 Add-Type -Path $config.AFSDKPath
 
+# access AF server
 $afServers = New-Object OSIsoft.AF.PISystems
 $afServer = $afServers[$config.AFServerName]
 Write-host("AFServer Name: {0}" -f $afServer.Name)
 
-# AFDatabase
+# access AF database
 $DB = $afServer.Databases[$config.DatabaseName]
 Write-host("DataBase Name: {0}" -f $DB.Name)
-
 
 foreach($object in $data){
     Add-Data -afDatabase $DB -rowData $object
 }
 try {
+    # check in changes!
     $DB.CheckIn()
     Write-Host "Successfully checked in changes to the database."
 }
 catch {
     Write-Error "Failed to check in changes: $_"
 }
+
